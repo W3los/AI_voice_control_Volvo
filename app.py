@@ -1,9 +1,9 @@
 # app.py – Flask backend z nowym stylem OpenAI 1.x
 import os
-from dotenv import load_dotenv
-from flask import Flask, request, jsonify, render_template
-import azure.cognitiveservices.speech as speechsdk
-from openai import AzureOpenAI
+#from dotenv import load_dotenv
+from flask import Flask, render_template, request, redirect, url_for, jsonify
+#import azure.cognitiveservices.speech as speechsdk
+#from openai import AzureOpenAI
 
 # Załaduj zmienne środowiskowe z pliku .env
 load_dotenv()
@@ -48,6 +48,37 @@ def ask():
         return jsonify({"response": answer})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+BLOGS = [
+    {
+        'id': 1, 
+        'title': 'Lorem Ipsum', 
+        'content': 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
+    }
+]
+
+@app.route("/blogs")
+def blogs():
+    return render_template("blogs.html", blogs=BLOGS)
+
+@app.route("/blogs/<int:blog_id>")
+def view_blog(blog_id):
+    blog = next((b for b in BLOGS if b["id"] == blog_id), None)
+    if blog is None:
+        return "Blog nie znaleziony", 404
+    return render_template("view_blog.html", blog=blog)
+
+@app.route("/blogs/new", methods=["GET", "POST"])
+def new_blog():
+    if request.method == "POST":
+        title = request.form["title"]
+        content = request.form["content"]
+        new_id = BLOGS[-1]["id"] + 1 if BLOGS else 1
+        BLOGS.append({"id": new_id, "title": title, "content": content})
+        return redirect(url_for("blogs"))
+    
+    return render_template("new_blog.html")
 
 if __name__ == "__main__":
     app.run(debug=True)
