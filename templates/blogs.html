@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Blogi</title>
+  <style>
+    body { font-family: sans-serif; max-width: 700px; margin: 2rem auto; }
+    .blog-list { margin-top: 2rem; }
+    .blog-item { margin-bottom: 1rem; }
+    .add-button { margin-bottom: 1.5rem; padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Blogi</h1>
+
+  <a href="/blogs/new">
+    <button class="add-button">Dodaj nowy blog</button>
+  </a>
+
+  <div class="blog-list">
+    {% for blog in blogs %}
+      <div class="blog-item">
+        <a href="{{ url_for('view_blog', blog_id=blog['id']) }}">{{ blog['title'] }}</a>
+      </div>
+    {% endfor %}
+  </div>
+</body>
+</html>
