@@ -1,42 +1,16 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-  <meta charset="UTF-8" />
-  <title>{{ blog.title }}</title>
-  <style>
-    body { 
-      font-family: sans-serif; 
-      max-width: 700px; 
-      margin: 2rem auto; 
-      padding: 0 1rem; 
-    }
-    h1 { 
-      margin-bottom: 1rem; 
-      font-size: 2rem; 
-      border-bottom: 2px solid #333; 
-      padding-bottom: 0.5rem; 
-    }
-    .content {
-      font-size: 1.2rem; 
-      line-height: 1.5; 
-      white-space: pre-wrap; /* keep line breaks */
-    }
-    a.back-link {
-      display: inline-block;
-      margin-top: 2rem;
-      text-decoration: none;
-      color: #007bff;
-      font-weight: bold;
-    }
-    a.back-link:hover {
-      text-decoration: underline;
-    }
-  </style>
-</head>
-<body>
-  <h1>{{ blog.title }}</h1>
-  <div class="content">{{ blog.content }}</div>
-  
-  <a href="{{ url_for('blogs') }}" class="back-link">← Wróć do listy blogów</a>
-</body>
-</html>
+{% extends "widget.html" %}
+
+{% block title %}{{ blog.title }}{% endblock %}
+
+{% block content %}
+  <h1 class="mb-4">{{ blog.title }}</h1>
+  <p>{{ blog.content }}</p>
+
+  <div class="mt-4 d-flex gap-2">
+    <a href="{{ url_for('index') }}" class="btn btn-secondary">Wróć</a>
+
+    <form action="{{ url_for('delete_blog', blog_id=blog.id) }}" method="post" onsubmit="return confirm('Czy na pewno chcesz usunąć ten blog?');">
+      <button type="submit" class="btn btn-danger">Usuń</button>
+    </form>
+  </div>
+{% endblock %}
