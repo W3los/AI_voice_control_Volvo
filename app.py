@@ -41,6 +41,7 @@ def init_db():
                 category TEXT NOT NULL,
                 tags TEXT NOT NULL,
                 publish_date TEXT NOT NULL,
+                summary TEXT NOT NULL,
                 content TEXT NOT NULL,
                 conclusion TEXT NOT NULL);
         """)
@@ -57,28 +58,61 @@ def index():
 def ask():
     data = request.json
     user_input = data.get("text")
+    mode = data.get("mode")        # np. "article" albo None
+    blog_id = data.get("blogId")   # np. 1 albo None
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {'role': 'system', 'content': '''
-                 Jesteś asystentem, który zasila stronę Internetową z artykułami, blogami, wpisami.
-                 Użytkownik może po prostu chcieć wejść z tobą w interakcję, poprosić o przeczytanie czy streszczenie artykułu, może też prosić o tłumaczenie.
-                 Kolejnym zadaniem jakie możesz wykonać, to pomóc uzytkownikowi uzupełniać formularz bloga.
-                 W tym i tylko w tym przypadku odpowiadaj w formacie JSON z odpowiednimi polami: title, subtitle, author, category, tags, summary, content, conclusion.
-                 Podaj kategorię wybierając jedną z: ["Technologia", "AI", "Poradnik", "Biznes", "Inne"]
-                 Pole kategorii jest case-sensitive, więc podaj dokładną wartość, uwzględniając wielkość liter i polskie znaki.
-                 Nie dołączaj niczego poza JSON.
-                 '''
-                },
-                {'role': 'user', 'content': user_input}
-            ]
-        )
+        if mode == "article" and blog_id:
+            db = get_db()
+            blog = db.execute("SELECT title, author, content FROM blogs WHERE id = ?", (blog_id,)).fetchone()
+            if blog is None:
+                return jsonify({"error": "Blog nie znaleziony."})
+
+            article_text = f"""
+            Tytuł: {blog['title']}
+            Autor: {blog['author']}
+            Treść: {blog['content']}
+            """
+
+            prompt = f"{user_input}\n\nArtykuł:\n{article_text}"
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {'role': 'system', 'content': '''
+                    Jesteś asystentem pomagającym użytkownikowi. Użytkownik poprosił o przeczytanie lub streszczenie artykułu.
+                    Użytkownik może cie też poprosić o znalezienie jakiegoś słowa w artykule.
+                    Jeżeli prosi cie o przeczytanie artykułu przeczytaj cały artykuł bez zmiany jakich kolwiek danych.
+                    Na podstawie poniższego artykułu odpowiedz na jego prośbę w języku polskim.
+                    Nie generuj nic poza odpowiedzią.
+                    '''},
+                    {'role': 'user', 'content': prompt}
+                ]
+            )
+        else:
+            # domyślna odpowiedź - normalna rozmowa / tworzenie bloga
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {'role': 'system', 'content': '''
+                     Jesteś asystentem, który zasila stronę Internetową z artykułami, blogami, wpisami.
+                     Użytkownik może po prostu chcieć wejść z tobą w interakcję, poprosić o przeczytanie czy streszczenie artykułu, może też prosić o tłumaczenie.
+                     Kolejnym zadaniem jakie możesz wykonać, to pomóc uzytkownikowi uzupełniać formularz bloga.
+                     W tym i tylko w tym przypadku odpowiadaj w formacie JSON z odpowiednimi polami: title, subtitle, author, category, tags, summary, content, conclusion.
+                     Podaj kategorię wybierając jedną z: ["Technologia", "AI", "Poradnik", "Biznes", "Inne"]
+                     Pole kategorii jest case-sensitive, więc podaj dokładną wartość, uwzględniając wielkość liter i polskie znaki.
+                     Nie dołączaj niczego poza JSON.
+                     '''
+                    },
+                    {'role': 'user', 'content': user_input}
+                ]
+            )
+
         answer = response.choices[0].message.content
         return jsonify({"response": answer})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/blogs/<int:blog_id>")
 def view_blog(blog_id):
@@ -123,5 +157,6 @@ def new_blog():
     return render_template("new_blog.html", today=str(date.today()))
 
 if __name__ == "__main__":
+    
     init_db()
     app.run(debug=True)
