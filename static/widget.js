@@ -102,6 +102,12 @@ async function processTranscript(text) {
         }
       }
     }
+    if (window.location.pathname === "/blogs/new" &&
+    /(dodaj|zapisz|wyślij).*(blog|formularz|artykuł)?/.test(lowerText)) {
+      responseEl.textContent = "Wysyłam formularz...";
+      document.querySelector("form")?.submit();
+      return;
+}
 
     // 2. Obsługa aktualizacji formularza (stary kod)
     const fieldToChange = detectFieldChange(text);
