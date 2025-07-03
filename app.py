@@ -1,53 +1,179 @@
-# app.py – Flask backend z nowym stylem OpenAI 1.x
 import os
+import sqlite3
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, render_template
-import azure.cognitiveservices.speech as speechsdk
+from flask import Flask, render_template, request, redirect, url_for, jsonify, g
 from openai import AzureOpenAI
+from datetime import date
 
-# Załaduj zmienne środowiskowe z pliku .env
 load_dotenv()
 
 app = Flask(__name__)
+DATABASE = 'blog.db'
 
-# Konfiguracja klienta Azure OpenAI
 client = AzureOpenAI(
-    api_key=os.getenv("AZURE_OPENAI_API_KEY"),  # Poprawiona zmienna środowiskowa
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     api_version="2024-12-01-preview",
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
 )
 
-AZURE_DEPLOYMENT_NAME = os.getenv("AZURE_DEPLOYMENT_NAME")
-# AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY")
-# AZURE_REGION = os.getenv("AZURE_REGION")
+def get_db():
+    db = getattr(g, '_database', None)
+    if db is None:
+        db = g._database = sqlite3.connect(DATABASE)
+        db.row_factory = sqlite3.Row
+    return db
 
-# Funkcja przekształcająca tekst na mowę
-# def generate_speech(text):
-#     speech_config = speechsdk.SpeechConfig(subscription=AZURE_SPEECH_KEY, region=AZURE_REGION)
-#     speech_config.speech_synthesis_voice_name = "pl-PL-KarolinaNeural"
-#     audio_config = speechsdk.audio.AudioOutputConfig(use_default_speaker=True)
-#     synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-#     synthesizer.speak_text_async(text)
+@app.teardown_appcontext
+def close_connection(exception):
+    db = getattr(g, '_database', None)
+    if db is not None:
+        db.close()
+
+def init_db():
+    with app.app_context():
+        db = get_db()
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS blogs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                subtitle TEXT NOT NULL,
+                author TEXT NOT NULL,
+                category TEXT NOT NULL,
+                tags TEXT NOT NULL,
+                publish_date TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                content TEXT NOT NULL,
+                conclusion TEXT NOT NULL);
+        """)
+
+        db.commit()
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    db = get_db()
+    blogs = db.execute("SELECT * FROM blogs").fetchall()
+    return render_template("index.html", blogs=blogs)
 
 @app.route("/api/ask", methods=["POST"])
 def ask():
     data = request.json
     user_input = data.get("text")
+    mode = data.get("mode")        # np. "article" albo None
+    history = data.get("history", [])
+    blog_id = data.get("blogId")   # np. 1 albo None
 
     try:
-        response = client.chat.completions.create(
-            model=AZURE_DEPLOYMENT_NAME,
-            messages=[{"role": "user", "content": user_input}]
-        )
+        if mode == "article" and blog_id:
+            db = get_db()
+            blog = db.execute("SELECT title, author, content FROM blogs WHERE id = ?", (blog_id,)).fetchone()
+            if blog is None:
+                return jsonify({"error": "Blog nie znaleziony."})
+
+            article_text = f"""
+            Tytuł: {blog['title']}
+            Autor: {blog['author']}
+            Treść: {blog['content']}
+            """
+
+            prompt = f"{user_input}\n\nArtykuł:\n{article_text}"
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {'role': 'system', 'content': '''
+                    Jesteś asystentem pomagającym użytkownikowi. Użytkownik poprosił o przeczytanie lub streszczenie artykułu.
+                    Użytkownik może cie też poprosić o znalezienie jakiegoś słowa w artykule.
+                    Jeżeli prosi cie o przeczytanie artykułu przeczytaj cały artykuł bez zmiany jakich kolwiek danych.
+                    Na podstawie poniższego artykułu odpowiedz na jego prośbę w języku polskim.
+                    Nie generuj nic poza odpowiedzią.
+                    '''},
+                    {'role': 'user', 'content': prompt}
+                ]
+            )
+        else:
+            # domyślna odpowiedź - normalna rozmowa / tworzenie bloga, z uwzględnieniem historii
+            history = data.get("history", [])
+
+            messages = [
+                {'role': 'system', 'content': '''
+                Jesteś asystentem, który zasila stronę Internetową z artykułami, blogami i wpisami.
+                Użytkownik może chcieć wejść w interakcję: zadać pytanie, poprosić o streszczenie, przeczytanie, tłumaczenie lub inne informacje.
+                Masz korzytać z całej historii rozmowy (przesłanej w polu "history"), aby Twoje odpowiedzi miały kontekst.
+                Jeśli użytkownik prosi o pomoc w uzupełnieniu formularza bloga, odpowiadaj **tylko** w czystym JSON-ie z polami: 
+                title, subtitle, author, category, tags, summary, content, conclusion.
+                W każdym innym wypadku odpowiadaj naturalnie, pełnym zdaniem po polsku, bez JSON-a.
+                '''}
+            ]
+
+            # Dokładamy historię (parzystość: najpierw user, potem assistant)
+            for turn in history:
+                user_msg = turn.get("user", "").strip()
+                ai_msg   = turn.get("ai",   "").strip()
+                if user_msg:
+                    messages.append({'role': 'user',      'content': user_msg})
+                if ai_msg:
+                    messages.append({'role': 'assistant', 'content': ai_msg})
+
+            # Bieżące pytanie
+            messages.append({'role': 'user', 'content': user_input})
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0.7
+            )
+
         answer = response.choices[0].message.content
-        # generate_speech(answer)
         return jsonify({"response": answer})
+
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/blogs/<int:blog_id>")
+def view_blog(blog_id):
+    db = get_db()
+    blog = db.execute("SELECT * FROM blogs WHERE id = ?", (blog_id,)).fetchone()
+    if blog is None:
+        return "Blog nie znaleziony", 404
+    return render_template("view_blog.html", blog=blog)
+
+@app.route("/blogs/<int:blog_id>/delete", methods=["POST"])
+def delete_blog(blog_id):
+    db = get_db()
+    db.execute("DELETE FROM blogs WHERE id = ?", (blog_id,))
+    db.commit()
+    return redirect(url_for('index'))
+
+@app.route("/blogs/new", methods=["GET", "POST"])
+def new_blog():
+    if request.method == "POST":
+        title = request.form["title"]
+        content = request.form["content"]
+        subtitle = request.form.get("subtitle", "")
+        author = request.form.get("author", "")
+        category = request.form.get("category", "")
+        tags = request.form.get("tags", "")
+        publish_date = request.form.get("publish_date") or str(date.today())
+        summary = request.form.get("summary", "")
+        conclusion = request.form.get("conclusion", "")
+
+        conn = get_db()
+        conn.execute(
+            """
+            INSERT INTO blogs (title, content, subtitle, author, category, tags, publish_date, summary, conclusion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (title, content, subtitle, author, category, tags, publish_date, summary, conclusion)
+        )
+        conn.commit()
+        conn.close()
+        return redirect("/")
+
+    return render_template("new_blog.html", today=str(date.today()))
+
 if __name__ == "__main__":
+    
+    init_db()
     app.run(debug=True)
